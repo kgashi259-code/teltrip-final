@@ -1,9 +1,10 @@
+// app/api/fetch-data/route.js
 import { NextResponse } from "next/server";
 import { fetchAllData } from "../../../lib/teltrip";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 60; // allow longer processing on Vercel
+export const maxDuration = 60; // Safe max duration for Hobby plan
 
 export async function GET(req) {
   try {
