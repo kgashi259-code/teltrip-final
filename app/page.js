@@ -58,7 +58,6 @@ async function fetchTemplateCost(templateId) {
     getPrepaidPackageTemplate: { prepaidPackageTemplateId: templateId }
   });
   const tpl = resp?.prepaidPackageTemplate || resp?.prepaidPackageTemplates || resp?.template || null;
-  // Be generous with field names
   const cost = Number(
     (tpl && (
       tpl.cost ?? tpl.price ?? tpl.amount ?? tpl.subscriberCost
@@ -163,49 +162,38 @@ export async function fetchAllData(accountIdParam) {
       reseller: s?.reseller ?? null,
       lastMcc: s?.lastMcc ?? null,
       lastMnc: s?.lastMnc ?? null,
-
-      // package
       prepaidpackagetemplatename: null,
       prepaidpackagetemplateid: null,
       tsactivationutc: null,
       tsexpirationutc: null,
       pckdatabyte: null,
       useddatabyte: null,
-      subscriberOneTimeCost: null,   // from template cost
-
-      // totals since 2025-06-01
+      subscriberOneTimeCost: null,
       totalBytesSinceJun1: null,
       resellerCostSinceJun1: null,
-
       _sid: s?.subscriberId ?? null
     };
   });
 
   await pMap(rows, async (r) => {
     if (!r._sid) return;
-
-    // 1) packages
     try {
       const pkg = await fetchPackagesFor(r._sid);
       if (pkg) Object.assign(r, pkg);
     } catch {}
 
-    // 2) get template cost by ID (override subscriberOneTimeCost)
     try {
       if (r.prepaidpackagetemplateid) {
         const tpl = await fetchTemplateCost(r.prepaidpackagetemplateid);
         if (tpl?.cost != null) {
           r.subscriberOneTimeCost = tpl.cost;
-          // (optional) r.packageCurrency = tpl.currency;
         }
-        // prefer template name if present
         if (tpl?.name && !r.prepaidpackagetemplatename) {
           r.prepaidpackagetemplatename = tpl.name;
         }
       }
     } catch {}
 
-    // 3) aggregated usage & reseller cost (Jun 1 → today)
     try {
       const aggr = await fetchAggregatedUsage(r._sid);
       r.totalBytesSinceJun1   = aggr.sumBytes;
