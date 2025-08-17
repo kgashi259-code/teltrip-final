@@ -1,5 +1,4 @@
 // Teltrip data layer: subscribers + packages + aggregated usage (Jun 1 → today)
-// subscriberOneTimeCost now comes from getPrepaidPackageTemplate (By template Id).
 
 const BASE = process.env.OCS_BASE_URL;
 const TOKEN = process.env.OCS_TOKEN;
@@ -14,7 +13,7 @@ async function callOCS(payload) {
   must(BASE, "OCS_BASE_URL"); must(TOKEN, "OCS_TOKEN");
   const url = `${BASE}?token=${encodeURIComponent(TOKEN)}`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 25_000);
+  const timer = setTimeout(() => controller.abort(), 25000);
   const r = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -48,27 +47,19 @@ function latestByDate(arr) {
   return arr.slice().sort((a,b)=>new Date(a.startDate||0)-new Date(b.startDate||0)).at(-1);
 }
 
-// ---------- template cost (4.1.1 By template Id) ----------
-const templateCostCache = new Map(); // id -> { cost, currency, name }
+// ---------- template cost ----------
+const templateCostCache = new Map();
 
 async function fetchTemplateCost(templateId) {
   if (!templateId) return null;
   if (templateCostCache.has(templateId)) return templateCostCache.get(templateId);
-  const resp = await callOCS({
-    getPrepaidPackageTemplate: { prepaidPackageTemplateId: templateId }
-  });
-  const tpl = resp?.prepaidPackageTemplate || resp?.prepaidPackageTemplates || resp?.template || null;
-  const cost = Number(
-    (tpl && (
-      tpl.cost ?? tpl.price ?? tpl.amount ?? tpl.subscriberCost
-    )) ?? NaN
-  );
-  const name = tpl?.name ?? tpl?.prepaidpackagetemplatename ?? null;
-  const currency = tpl?.currency ?? tpl?.curr ?? null;
+  const resp = await callOCS({ getPrepaidPackageTemplate: { prepaidPackageTemplateId: templateId } });
+  const tpl = resp?.prepaidPackageTemplate || {};
+  const cost = Number(tpl.cost ?? tpl.price ?? tpl.amount ?? tpl.subscriberCost ?? NaN);
   const val = {
     cost: Number.isFinite(cost) ? cost : null,
-    currency: currency || null,
-    name: name || null
+    currency: tpl.currency ?? null,
+    name: tpl.name ?? null
   };
   templateCostCache.set(templateId, val);
   return val;
@@ -115,7 +106,7 @@ async function fetchUsageWindow(subscriberId, startYMD, endYMD) {
   });
   const total = resp?.subscriberUsageOverPeriod?.total || {};
   const qty = total?.quantityPerType || {};
-  const bytes = typeof qty["33"] === "number" ? qty["33"] : null; // data
+  const bytes = typeof qty["33"] === "number" ? qty["33"] : null;
   const resellerCost = Number.isFinite(total?.resellerCost) ? total.resellerCost : null;
   return { bytes, resellerCost };
 }
@@ -126,7 +117,7 @@ async function fetchAggregatedUsage(subscriberId) {
   let sumBytes = 0, sumResCost = 0;
   await pMap(windows, async (win) => {
     const { bytes, resellerCost } = await fetchUsageWindow(subscriberId, win.start, win.end);
-    if (Number.isFinite(bytes))        sumBytes += bytes;
+    if (Number.isFinite(bytes)) sumBytes += bytes;
     if (Number.isFinite(resellerCost)) sumResCost += resellerCost;
   }, 6);
   return { sumBytes, sumResCost };
@@ -135,33 +126,20 @@ async function fetchAggregatedUsage(subscriberId) {
 // ---------- main ----------
 export async function fetchAllData(accountIdParam) {
   const accountId = parseInt(accountIdParam || DEFAULT_ACCOUNT_ID || "0", 10);
-  if (!accountId) throw new Error("Provide accountId (env OCS_ACCOUNT_ID or ?accountId=)");
+  if (!accountId) throw new Error("Provide accountId");
 
   const subsResp = await callOCS({ listSubscriber: { accountId } });
   const subscribers = subsResp?.listSubscriber?.subscriberList || [];
 
   const rows = subscribers.map((s) => {
-    const imsi = s?.imsiList?.[0]?.imsi ?? null;
     const iccid = s?.imsiList?.[0]?.iccid ?? s?.sim?.iccid ?? null;
-    const phone = s?.phoneNumberList?.[0]?.phoneNumber ?? null;
     const st = latestByDate(s?.status) || null;
     return {
       iccid,
-      imsi,
-      phoneNumber: phone,
       activationDate: s?.activationDate ?? null,
       lastUsageDate: s?.lastUsageDate ?? null,
       subscriberStatus: st?.status ?? null,
-      simStatus: s?.sim?.status ?? null,
-      esim: s?.sim?.esim ?? null,
-      smdpServer: s?.sim?.smdpServer ?? null,
-      activationCode: s?.sim?.activationCode ?? null,
-      prepaid: s?.prepaid ?? null,
-      balance: s?.balance ?? null,
       account: s?.account ?? null,
-      reseller: s?.reseller ?? null,
-      lastMcc: s?.lastMcc ?? null,
-      lastMnc: s?.lastMnc ?? null,
       prepaidpackagetemplatename: null,
       prepaidpackagetemplateid: null,
       tsactivationutc: null,
@@ -185,18 +163,14 @@ export async function fetchAllData(accountIdParam) {
     try {
       if (r.prepaidpackagetemplateid) {
         const tpl = await fetchTemplateCost(r.prepaidpackagetemplateid);
-        if (tpl?.cost != null) {
-          r.subscriberOneTimeCost = tpl.cost;
-        }
-        if (tpl?.name && !r.prepaidpackagetemplatename) {
-          r.prepaidpackagetemplatename = tpl.name;
-        }
+        if (tpl?.cost != null) r.subscriberOneTimeCost = tpl.cost;
+        if (tpl?.name && !r.prepaidpackagetemplatename) r.prepaidpackagetemplatename = tpl.name;
       }
     } catch {}
 
     try {
       const aggr = await fetchAggregatedUsage(r._sid);
-      r.totalBytesSinceJun1   = aggr.sumBytes;
+      r.totalBytesSinceJun1 = aggr.sumBytes;
       r.resellerCostSinceJun1 = aggr.sumResCost;
     } catch {}
 
