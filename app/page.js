@@ -1,111 +1,219 @@
-"use client";
+// Teltrip data layer: subscribers + packages + aggregated usage (Jun 1 → today)
+// subscriberOneTimeCost now comes from getPrepaidPackageTemplate (By template Id).
 
-import { useEffect, useState } from "react";
+const BASE = process.env.OCS_BASE_URL;
+const TOKEN = process.env.OCS_TOKEN;
+const DEFAULT_ACCOUNT_ID = parseInt(process.env.OCS_ACCOUNT_ID || "0", 10);
+const RANGE_START_YMD = "2025-06-01";
 
-export default function Page() {
-  const [accountId, setAccountId] = useState("3771");
-  const [data, setData] = useState([]);
-  const [accounts, setAccounts] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState(null);
+function must(v, name) { if (!v) throw new Error(`${name} missing`); return v; }
+const toYMD = (d) => d.toISOString().slice(0, 10);
 
-  useEffect(() => {
-    fetch("/api/accounts")
-      .then((r) => r.json())
-      .then((res) => {
-        if (res.ok) setAccounts(res.data || []);
-      });
-  }, []);
+// ---------- core fetch ----------
+async function callOCS(payload) {
+  must(BASE, "OCS_BASE_URL"); must(TOKEN, "OCS_TOKEN");
+  const url = `${BASE}?token=${encodeURIComponent(TOKEN)}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 25_000);
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+    signal: controller.signal
+  }).finally(() => clearTimeout(timer));
+  const text = await r.text();
+  let json = null; try { json = text ? JSON.parse(text) : null; } catch {}
+  if (!r.ok) throw new Error(`HTTP ${r.status} ${r.statusText}${text ? " :: " + text.slice(0,300) : ""}`);
+  return json ?? {};
+}
 
-  useEffect(() => {
-    if (!accountId) return;
-    setLoading(true);
-    setErr(null);
-    fetch(`/api/fetch-data?accountId=${accountId}`)
-      .then((r) => r.json())
-      .then((res) => {
-        if (res.ok) setData(res.data || []);
-        else setErr(res.error || "Unknown error");
-      })
-      .catch((e) => setErr(e.message || "Fetch error"))
-      .finally(() => setLoading(false));
-  }, [accountId]);
-
-  const totalSubCost = data.reduce((a, r) => a + (r.subscriberOneTimeCost || 0), 0);
-  const totalReseller = data.reduce((a, r) => a + (r.resellerCostSinceJun1 || 0), 0);
-
-  return (
-    <main style={{ background: "#f3f7dc", padding: 20 }}>
-      <div style={{ marginBottom: 12 }}>
-        <select
-          value={accountId}
-          onChange={(e) => setAccountId(e.target.value)}
-        >
-          {accounts.map((a) => (
-            <option key={a.accountId} value={a.accountId}>
-              {a.name} — {a.accountId}
-            </option>
-          ))}
-        </select>
-        <button onClick={() => setAccountId(accountId)}>Refresh Accounts</button>
-      </div>
-
-      <h2>Overview</h2>
-      <div style={{ marginBottom: 10 }}>
-        <b>Total Subscriber Cost:</b> {totalSubCost.toFixed(2)}   |  
-        <b>Total Reseller Cost:</b> {totalReseller.toFixed(2)}   |  
-        <b>PNL:</b> {(totalSubCost - totalReseller).toFixed(2)}
-      </div>
-
-      {err && (
-        <div style={{ background: "#ffefef", border: "1px solid #e5a5a5", color: "#900", padding: "10px 12px", borderRadius: 10, marginBottom: 12, whiteSpace: "pre-wrap", fontSize: 12 }}>
-          {err}
-        </div>
-      )}
-
-      <table style={{ width: "100%", fontSize: 14, background: "#fbfceb" }}>
-        <thead>
-          <tr>
-            <th>iccid</th>
-            <th>subscriberStatus</th>
-            <th>activationDate</th>
-            <th>lastUsageDate</th>
-            <th>account</th>
-            <th>prepaidpackagetemplatename</th>
-            <th>prepaidpackagetemplateid</th>
-            <th>tsactivationutc</th>
-            <th>tsexpirationutc</th>
-            <th>pckdatabyte</th>
-            <th>useddatabyte</th>
-            <th>subscriberOneTimeCost</th>
-            <th>totalBytesSinceJun1</th>
-            <th>resellerCostSinceJun1</th>
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((r, i) => (
-            <tr key={i}>
-              <td>{r.iccid}</td>
-              <td>{r.subscriberStatus}</td>
-              <td>{r.activationDate?.slice(0, 19).replace("T", " ")}</td>
-              <td>{r.lastUsageDate?.slice(0, 19).replace("T", " ")}</td>
-              <td>{r.account?.name}</td>
-              <td>{r.prepaidpackagetemplatename}</td>
-              <td>{r.prepaidpackagetemplateid}</td>
-              <td>{r.tsactivationutc}</td>
-              <td>{r.tsexpirationutc}</td>
-              <td>{(r.pckdatabyte / 1e9).toFixed(2)}</td>
-              <td>{(r.useddatabyte / 1e9).toFixed(2)}</td>
-              <td>{r.subscriberOneTimeCost}</td>
-              <td>{(r.totalBytesSinceJun1 / 1e9).toFixed(2)}</td>
-              <td>{r.resellerCostSinceJun1}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div style={{ fontSize: 12, marginTop: 12 }}>
-        Costs: package one-time from template; reseller cost aggregated since <b>{RANGE_START_YMD}</b>. PNL = Subscriber One-Time − Reseller Cost.
-      </div>
-    </main>
+// ---------- small worker pool ----------
+async function pMap(list, fn, concurrency = 5) {
+  const out = new Array(list.length);
+  let i = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, list.length) }, async () => {
+      while (i < list.length) {
+        const idx = i++;
+        out[idx] = await fn(list[idx], idx);
+      }
+    })
   );
+  return out;
+}
+
+function latestByDate(arr) {
+  if (!Array.isArray(arr) || !arr.length) return null;
+  return arr.slice().sort((a,b)=>new Date(a.startDate||0)-new Date(b.startDate||0)).at(-1);
+}
+
+// ---------- template cost (4.1.1 By template Id) ----------
+const templateCostCache = new Map(); // id -> { cost, currency, name }
+
+async function fetchTemplateCost(templateId) {
+  if (!templateId) return null;
+  if (templateCostCache.has(templateId)) return templateCostCache.get(templateId);
+  const resp = await callOCS({
+    getPrepaidPackageTemplate: { prepaidPackageTemplateId: templateId }
+  });
+  const tpl = resp?.prepaidPackageTemplate || resp?.prepaidPackageTemplates || resp?.template || null;
+  // Be generous with field names
+  const cost = Number(
+    (tpl && (
+      tpl.cost ?? tpl.price ?? tpl.amount ?? tpl.subscriberCost
+    )) ?? NaN
+  );
+  const name = tpl?.name ?? tpl?.prepaidpackagetemplatename ?? null;
+  const currency = tpl?.currency ?? tpl?.curr ?? null;
+  const val = {
+    cost: Number.isFinite(cost) ? cost : null,
+    currency: currency || null,
+    name: name || null
+  };
+  templateCostCache.set(templateId, val);
+  return val;
+}
+
+// ---------- packages ----------
+async function fetchPackagesFor(subscriberId) {
+  const resp = await callOCS({ listSubscriberPrepaidPackages: { subscriberId } });
+  const pkgs = resp?.listSubscriberPrepaidPackages?.packages || [];
+  if (!pkgs.length) return null;
+  pkgs.sort((a,b)=> new Date(a.tsactivationutc||0) - new Date(b.tsactivationutc||0));
+  const p = pkgs.at(-1);
+  const tpl = p?.packageTemplate || {};
+  return {
+    prepaidpackagetemplatename: tpl.prepaidpackagetemplatename ?? tpl.name ?? null,
+    prepaidpackagetemplateid: tpl.prepaidpackagetemplateid ?? tpl.id ?? null,
+    tsactivationutc: p?.tsactivationutc ?? null,
+    tsexpirationutc: p?.tsexpirationutc ?? null,
+    pckdatabyte: p?.pckdatabyte ?? null,
+    useddatabyte: p?.useddatabyte ?? null
+  };
+}
+
+// ---------- usage windows ----------
+function addDays(base, n) { const d = new Date(base); d.setDate(d.getDate() + n); return d; }
+function parseYMD(s) { const [y,m,d]=s.split("-").map(Number); return new Date(Date.UTC(y, m-1, d)); }
+function* weekWindows(startYMD, endYMD) {
+  let start = parseYMD(startYMD);
+  const endHard = parseYMD(endYMD);
+  while (start <= endHard) {
+    const end = addDays(start, 6);
+    const endClamped = end > endHard ? endHard : end;
+    yield { start: toYMD(start), end: toYMD(endClamped) };
+    start = addDays(endClamped, 1);
+  }
+}
+
+async function fetchUsageWindow(subscriberId, startYMD, endYMD) {
+  const resp = await callOCS({
+    subscriberUsageOverPeriod: {
+      subscriber: { subscriberId },
+      period: { start: startYMD, end: endYMD }
+    }
+  });
+  const total = resp?.subscriberUsageOverPeriod?.total || {};
+  const qty = total?.quantityPerType || {};
+  const bytes = typeof qty["33"] === "number" ? qty["33"] : null; // data
+  const resellerCost = Number.isFinite(total?.resellerCost) ? total.resellerCost : null;
+  return { bytes, resellerCost };
+}
+
+async function fetchAggregatedUsage(subscriberId) {
+  const todayYMD = toYMD(new Date());
+  const windows = Array.from(weekWindows(RANGE_START_YMD, todayYMD));
+  let sumBytes = 0, sumResCost = 0;
+  await pMap(windows, async (win) => {
+    const { bytes, resellerCost } = await fetchUsageWindow(subscriberId, win.start, win.end);
+    if (Number.isFinite(bytes))        sumBytes += bytes;
+    if (Number.isFinite(resellerCost)) sumResCost += resellerCost;
+  }, 6);
+  return { sumBytes, sumResCost };
+}
+
+// ---------- main ----------
+export async function fetchAllData(accountIdParam) {
+  const accountId = parseInt(accountIdParam || DEFAULT_ACCOUNT_ID || "0", 10);
+  if (!accountId) throw new Error("Provide accountId (env OCS_ACCOUNT_ID or ?accountId=)");
+
+  const subsResp = await callOCS({ listSubscriber: { accountId } });
+  const subscribers = subsResp?.listSubscriber?.subscriberList || [];
+
+  const rows = subscribers.map((s) => {
+    const imsi = s?.imsiList?.[0]?.imsi ?? null;
+    const iccid = s?.imsiList?.[0]?.iccid ?? s?.sim?.iccid ?? null;
+    const phone = s?.phoneNumberList?.[0]?.phoneNumber ?? null;
+    const st = latestByDate(s?.status) || null;
+    return {
+      iccid,
+      imsi,
+      phoneNumber: phone,
+      activationDate: s?.activationDate ?? null,
+      lastUsageDate: s?.lastUsageDate ?? null,
+      subscriberStatus: st?.status ?? null,
+      simStatus: s?.sim?.status ?? null,
+      esim: s?.sim?.esim ?? null,
+      smdpServer: s?.sim?.smdpServer ?? null,
+      activationCode: s?.sim?.activationCode ?? null,
+      prepaid: s?.prepaid ?? null,
+      balance: s?.balance ?? null,
+      account: s?.account ?? null,
+      reseller: s?.reseller ?? null,
+      lastMcc: s?.lastMcc ?? null,
+      lastMnc: s?.lastMnc ?? null,
+
+      // package
+      prepaidpackagetemplatename: null,
+      prepaidpackagetemplateid: null,
+      tsactivationutc: null,
+      tsexpirationutc: null,
+      pckdatabyte: null,
+      useddatabyte: null,
+      subscriberOneTimeCost: null,   // from template cost
+
+      // totals since 2025-06-01
+      totalBytesSinceJun1: null,
+      resellerCostSinceJun1: null,
+
+      _sid: s?.subscriberId ?? null
+    };
+  });
+
+  await pMap(rows, async (r) => {
+    if (!r._sid) return;
+
+    // 1) packages
+    try {
+      const pkg = await fetchPackagesFor(r._sid);
+      if (pkg) Object.assign(r, pkg);
+    } catch {}
+
+    // 2) get template cost by ID (override subscriberOneTimeCost)
+    try {
+      if (r.prepaidpackagetemplateid) {
+        const tpl = await fetchTemplateCost(r.prepaidpackagetemplateid);
+        if (tpl?.cost != null) {
+          r.subscriberOneTimeCost = tpl.cost;
+          // (optional) r.packageCurrency = tpl.currency;
+        }
+        // prefer template name if present
+        if (tpl?.name && !r.prepaidpackagetemplatename) {
+          r.prepaidpackagetemplatename = tpl.name;
+        }
+      }
+    } catch {}
+
+    // 3) aggregated usage & reseller cost (Jun 1 → today)
+    try {
+      const aggr = await fetchAggregatedUsage(r._sid);
+      r.totalBytesSinceJun1   = aggr.sumBytes;
+      r.resellerCostSinceJun1 = aggr.sumResCost;
+    } catch {}
+
+    delete r._sid;
+  }, 6);
+
+  return rows;
 }
