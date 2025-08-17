@@ -20,11 +20,12 @@ const fmtDT = (s) => typeof s === "string" ? s.replace("T", " ") : s ?? "";
 
 // columns
 const columns = [
-  "ICCID","IMSI","phoneNumber","subscriberStatus","simStatus","esim","activationCode",
-  "activationDate","lastUsageDate","prepaid","balance","account","reseller","lastMcc","lastMnc",
-  "prepaidpackagetemplatename","prepaidpackagetemplateid","tsactivationutc","tsexpirationutc","pckdatabyte","useddatabyte","pckdata(GB)","used(GB)",
-  "subscriberOneTimeCost","usageSinceJun1(GB)","resellerCostSinceJun1"
+  "ICCID", "subscriberStatus", "activationDate", "lastUsageDate",
+  "account", "prepaidpackagetemplatename", "prepaidpackagetemplateid",
+  "tsactivationutc", "tsexpirationutc", "pckdatabyte", "useddatabyte",
+  "pckdata(GB)", "used(GB)", "subscriberOneTimeCost", "usageSinceJun1(GB)", "resellerCostSinceJun1"
 ];
+
 
 export default function Page() {
   const [accountId, setAccountId] = useState("3771");
