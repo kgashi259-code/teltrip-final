@@ -1,4 +1,3 @@
-
 "use client";
 import { useState } from "react";
 
@@ -24,17 +23,75 @@ export default function LoginPage() {
   };
 
   return (
-    <div style={{minHeight:"100svh",display:"grid",placeItems:"center",background:"#0b1020",color:"#e9eef9",fontFamily:"system-ui"}}>
-      <form onSubmit={submit} style={{width:360,padding:24,background:"#121a36",borderRadius:16,boxShadow:"0 10px 30px rgba(0,0,0,.3)"}}>
-        <h1 style={{margin:0,marginBottom:16,fontSize:24}}>Sign in</h1>
-        <label style={{display:"block",fontSize:14,marginBottom:6}}>Username</label>
-        <input value={u} onChange={e=>setU(e.target.value)} required
-               style={{width:"100%",padding:10,borderRadius:10,border:"1px solid #2b3764",background:"#0e1430",color:"#e9eef9",marginBottom:12}}/>
-        <label style={{display:"block",fontSize:14,marginBottom:6}}>Password</label>
-        <input type="password" value={p} onChange={e=>setP(e.target.value)} required
-               style={{width:"100%",padding:10,borderRadius:10,border:"1px solid #2b3764",background:"#0e1430",color:"#e9eef9",marginBottom:16}}/>
-        {err && <div style={{color:"#ff6b6b",fontSize:13,marginBottom:12}}>{err}</div>}
-        <button type="submit" style={{width:"100%",padding:12,borderRadius:10,border:"none",background:"#3b82f6",color:"#fff",fontWeight:600,cursor:"pointer"}}>
+    <div style={{
+      minHeight: "100svh",
+      background: "#f2f6fc",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      flexDirection: "column",
+      fontFamily: "system-ui"
+    }}>
+      <img
+        src="/logo.png"
+        alt="Teltrip Logo"
+        style={{ height: 64, marginBottom: 32 }}
+      />
+      <form onSubmit={submit} style={{
+        width: 360,
+        padding: 28,
+        background: "#ffffff",
+        borderRadius: 16,
+        boxShadow: "0 15px 40px rgba(0,0,0,0.1)",
+        display: "flex",
+        flexDirection: "column",
+        gap: 16
+      }}>
+        <h1 style={{ margin: 0, fontSize: 22, color: "#111" }}>Sign in</h1>
+
+        <input
+          placeholder="Username"
+          value={u}
+          onChange={e => setU(e.target.value)}
+          required
+          style={{
+            padding: 12,
+            borderRadius: 10,
+            border: "1px solid #ccc",
+            background: "#fff",
+            color: "#111",
+            fontSize: 14
+          }}
+        />
+
+        <input
+          type="password"
+          placeholder="Password"
+          value={p}
+          onChange={e => setP(e.target.value)}
+          required
+          style={{
+            padding: 12,
+            borderRadius: 10,
+            border: "1px solid #ccc",
+            background: "#fff",
+            color: "#111",
+            fontSize: 14
+          }}
+        />
+
+        {err && <div style={{ color: "#e00", fontSize: 13 }}>{err}</div>}
+
+        <button type="submit" style={{
+          padding: 12,
+          borderRadius: 10,
+          background: "#3b82f6",
+          border: "none",
+          color: "#fff",
+          fontWeight: 600,
+          fontSize: 15,
+          cursor: "pointer"
+        }}>
           Login
         </button>
       </form>
