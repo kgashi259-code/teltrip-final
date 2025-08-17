@@ -79,7 +79,8 @@ async function fetchPackagesFor(subscriberId) {
     tsactivationutc: p?.tsactivationutc ?? null,
     tsexpirationutc: p?.tsexpirationutc ?? null,
     pckdatabyte: p?.pckdatabyte ?? null,
-    useddatabyte: p?.useddatabyte ?? null
+    useddatabyte: p?.useddatabyte ?? null,
+    subscriberOneTimeCost: p?.cost ?? null   // ✅ capture package cost
   };
 }
 
@@ -161,7 +162,8 @@ export async function fetchAllData(accountIdParam) {
     } catch {}
 
     try {
-      if (r.prepaidpackagetemplateid) {
+      if (r.subscriberOneTimeCost == null && r.prepaidpackagetemplateid) {
+        // fallback only if package cost missing
         const tpl = await fetchTemplateCost(r.prepaidpackagetemplateid);
         if (tpl?.cost != null) r.subscriberOneTimeCost = tpl.cost;
         if (tpl?.name && !r.prepaidpackagetemplatename) r.prepaidpackagetemplatename = tpl.name;
