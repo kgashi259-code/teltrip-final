@@ -1,184 +1,110 @@
 "use client";
 
-import React, { useEffect, useMemo, useState, Fragment } from "react";
-import * as XLSX from "xlsx";
-
-async function safeFetch(url) {
-  const res = await fetch(url, { cache: "no-store" });
-  const txt = await res.text();
-  let json = null;
-  try {
-    json = txt ? JSON.parse(txt) : null;
-  } catch {}
-  if (!res.ok)
-    throw new Error(
-      `HTTP ${res.status} ${res.statusText}${txt ? " :: " + txt.slice(0, 300) : ""}`
-    );
-  return json ?? {};
-}
-
-const bytesToGB = (b) =>
-  b == null || isNaN(b) ? "" : (Number(b) / 1024 ** 3).toFixed(2);
-const money = (n) => (n == null || isNaN(n) ? "" : Number(n).toFixed(2));
-const fmtDT = (s) => (typeof s === "string" ? s.replace("T", " ") : s ?? "");
-
-const columns = [
-  "iccid",
-  "subscriberStatus",
-  "activationDate",
-  "lastUsageDate",
-  "account",
-  "prepaidpackagetemplatename",
-  "prepaidpackagetemplateid",
-  "tsactivationutc",
-  "tsexpirationutc",
-  "pckdatabyte",
-  "useddatabyte",
-  "subscriberOneTimeCost",
-  "totalBytesSinceJun1",
-  "resellerCostSinceJun1"
-];
+import { useEffect, useState } from "react";
 
 export default function Page() {
   const [accountId, setAccountId] = useState("3771");
-  const [rows, setRows] = useState([]);
-  const [q, setQ] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
+  const [data, setData] = useState([]);
   const [accounts, setAccounts] = useState([]);
-  const [accountSearch, setAccountSearch] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
 
-  const logoSrc = process.env.NEXT_PUBLIC_LOGO_URL || "/logo.png";
-
-  async function loadAccounts() {
-    const url = "/api/accounts";
-    const r = await fetch(url, { cache: "no-store" });
-    const t = await r.text();
-    let j = null;
-    try {
-      j = t ? JSON.parse(t) : null;
-    } catch {}
-    if (j?.ok && Array.isArray(j.data)) {
-      setAccounts(j.data);
-      if (!j.data.some((a) => String(a.id) === String(accountId)) && j.data.length) {
-        setAccountId(String(j.data[0].id));
-      }
-    }
-  }
   useEffect(() => {
-    loadAccounts();
+    fetch("/api/accounts")
+      .then((r) => r.json())
+      .then((res) => {
+        if (res.ok) setAccounts(res.data || []);
+      });
   }, []);
 
-  async function load() {
-    setErr("");
-    setLoading(true);
-    try {
-      const url = new URL("/api/fetch-data", window.location.origin);
-      if (accountId) url.searchParams.set("accountId", String(accountId).trim());
-      const payload = await safeFetch(url.toString());
-      if (payload?.ok === false) throw new Error(payload.error || "API error");
-      setRows(Array.isArray(payload?.data) ? payload.data : []);
-      if (!Array.isArray(payload?.data))
-        setErr("No data array. Check env/token/accountId.");
-    } catch (e) {
-      setRows([]);
-      setErr(e.message || "Failed");
-    } finally {
-      setLoading(false);
-    }
-  }
   useEffect(() => {
-    load();
+    if (!accountId) return;
+    setLoading(true);
+    setErr(null);
+    fetch(`/api/fetch-data?accountId=${accountId}`)
+      .then((r) => r.json())
+      .then((res) => {
+        if (res.ok) setData(res.data || []);
+        else setErr(res.error || "Unknown error");
+      })
+      .catch((e) => setErr(e.message || "Fetch error"))
+      .finally(() => setLoading(false));
   }, [accountId]);
 
-  const filtered = useMemo(() => {
-    const n = q.trim().toLowerCase();
-    if (!n) return rows;
-    return rows.filter((r) =>
-      Object.values(r).some((v) =>
-        String(v ?? "").toLowerCase().includes(n)
-      )
-    );
-  }, [rows, q]);
-
-  const totals = useMemo(() => {
-    let totalReseller = 0;
-    let totalSubscriberOneTime = 0;
-    for (const r of rows) {
-      if (Number.isFinite(r?.resellerCostSinceJun1))
-        totalReseller += Number(r.resellerCostSinceJun1);
-      if (Number.isFinite(r?.subscriberOneTimeCost))
-        totalSubscriberOneTime += Number(r.subscriberOneTimeCost);
-    }
-    const pnl = totalSubscriberOneTime - totalReseller;
-    return { totalReseller, totalSubscriberOneTime, pnl };
-  }, [rows]);
+  const totalSubCost = data.reduce((a, r) => a + (r.subscriberOneTimeCost || 0), 0);
+  const totalReseller = data.reduce((a, r) => a + (r.resellerCostSinceJun1 || 0), 0);
 
   return (
-    <main style={{ padding: 24, maxWidth: 1800, margin: "0 auto" }}>
-      <header style={{ display: "flex", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <img src={logoSrc} alt="Teltrip" style={{ height: 48 }} />
-          <h1>Teltrip Dashboard</h1>
-        </div>
-      </header>
-
-      <div style={{ display: "flex", gap: 12, margin: "12px 0" }}>
-        <select
-          value={String(accountId)}
-          onChange={(e) => {
-            setAccountId(e.target.value);
-          }}
-        >
-          {accounts
-            .filter((a) =>
-              (a.name || "").toLowerCase().includes(
-                (accountSearch || "").toLowerCase()
-              )
-            )
-            .map((a) => (
-              <option key={a.id} value={String(a.id)}>
-                {a.name} — {a.id}
-              </option>
-            ))}
-        </select>
-        <button onClick={loadAccounts}>Refresh Accounts</button>
-        <input
-          placeholder="Filter accounts..."
-          value={accountSearch}
-          onChange={(e) => setAccountSearch(e.target.value)}
-        />
-      </div>
-
+    <main style={{ background: "#f3f7dc", padding: 20 }}>
       <div style={{ marginBottom: 12 }}>
-        <b>Totals:</b> Subscriber: €{money(totals.totalSubscriberOneTime)} | Reseller: €{money(totals.totalReseller)} | PNL: €{money(totals.pnl)}
+        <select
+          value={accountId}
+          onChange={(e) => setAccountId(e.target.value)}
+        >
+          {accounts.map((a) => (
+            <option key={a.accountId} value={a.accountId}>
+              {a.name} — {a.accountId}
+            </option>
+          ))}
+        </select>
+        <button onClick={() => setAccountId(accountId)}>Refresh Accounts</button>
       </div>
 
-      {err && <div style={{ color: "red" }}>{err}</div>}
+      <h2>Overview</h2>
+      <div style={{ marginBottom: 10 }}>
+        <b>Total Subscriber Cost:</b> {totalSubCost.toFixed(2)}   |  
+        <b>Total Reseller Cost:</b> {totalReseller.toFixed(2)}   |  
+        <b>PNL:</b> {(totalSubCost - totalReseller).toFixed(2)}
+      </div>
 
-      <div style={{ overflowX: "auto" }}>
-        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${columns.length}, 1fr)`, fontWeight: 'bold', background: '#eefecc', padding: 10 }}>
-          {columns.map((col) => (
-            <div key={col}>{col}</div>
-          ))}
+      {err && (
+        <div style={{ background: "#ffefef", border: "1px solid #e5a5a5", color: "#900", padding: "10px 12px", borderRadius: 10, marginBottom: 12, whiteSpace: "pre-wrap", fontSize: 12 }}>
+          {err}
         </div>
+      )}
 
-        {filtered.map((r, i) => (
-          <div key={i} style={{
-            display: 'grid',
-            gridTemplateColumns: `repeat(${columns.length}, 1fr)`,
-            gap: 2,
-            borderTop: '1px solid #ccc',
-            padding: 8,
-            background: i % 2 === 0 ? '#f7fcd1' : '#f5fbd7'
-          }}>
-            {columns.map((col) => (
-              <div key={col} style={{ fontSize: 13 }}>
-                {col.includes("Cost") ? money(r[col]) : col.includes("Bytes") ? bytesToGB(r[col]) : fmtDT(r[col])}
-              </div>
-            ))}
-          </div>
-        ))}
+      <table style={{ width: "100%", fontSize: 14, background: "#fbfceb" }}>
+        <thead>
+          <tr>
+            <th>iccid</th>
+            <th>subscriberStatus</th>
+            <th>activationDate</th>
+            <th>lastUsageDate</th>
+            <th>account</th>
+            <th>prepaidpackagetemplatename</th>
+            <th>prepaidpackagetemplateid</th>
+            <th>tsactivationutc</th>
+            <th>tsexpirationutc</th>
+            <th>pckdatabyte</th>
+            <th>useddatabyte</th>
+            <th>subscriberOneTimeCost</th>
+            <th>totalBytesSinceJun1</th>
+            <th>resellerCostSinceJun1</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((r, i) => (
+            <tr key={i}>
+              <td>{r.iccid}</td>
+              <td>{r.subscriberStatus}</td>
+              <td>{r.activationDate?.slice(0, 19).replace("T", " ")}</td>
+              <td>{r.lastUsageDate?.slice(0, 19).replace("T", " ")}</td>
+              <td>{r.account?.name}</td>
+              <td>{r.prepaidpackagetemplatename}</td>
+              <td>{r.prepaidpackagetemplateid}</td>
+              <td>{r.tsactivationutc}</td>
+              <td>{r.tsexpirationutc}</td>
+              <td>{(r.pckdatabyte / 1e9).toFixed(2)}</td>
+              <td>{(r.useddatabyte / 1e9).toFixed(2)}</td>
+              <td>{r.subscriberOneTimeCost}</td>
+              <td>{(r.totalBytesSinceJun1 / 1e9).toFixed(2)}</td>
+              <td>{r.resellerCostSinceJun1}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ fontSize: 12, marginTop: 12 }}>
+        Costs: package one-time from template; reseller cost aggregated since <b>{RANGE_START_YMD}</b>. PNL = Subscriber One-Time − Reseller Cost.
       </div>
     </main>
   );
